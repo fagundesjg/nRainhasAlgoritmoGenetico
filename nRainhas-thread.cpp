@@ -2,23 +2,28 @@
 #include <vector>
 #include <stdlib.h>
 #include <time.h>
+#include <thread>
+#include <algorithm>
 #include <chrono>
+#include <mutex>
 
 using namespace std;
 
 // 40,50,50,3000,0.2,0.7
 
 #define TAM_GENES 10 // TAMANHO DO TABULEIRO DA N RAINHAS... NxN
-#define TAM_POPULACAO 40
-#define TAM_TORNEIO 50
+#define TAM_POPULACAO 200
+#define TAM_TORNEIO 500
 #define GERACOES 10000
 #define PROB_MUTACAO 0.2
 #define PROB_CRUZAMENTO 0.7
 
-typedef vector< vector<int> > Matriz;
+#define N_THREADS 8
+
+typedef vector<vector<int>> Matriz;
 
 void iniciarMatriz(Matriz &matriz);
-void inicializarPopulacao(vector<Matriz> &populacao);
+void inicializarPopulacao();
 void exibir(Matriz matriz);
 int checarLinha(Matriz matriz, int linha);
 int checarColuna(Matriz matriz, int coluna);
@@ -27,6 +32,8 @@ int checarDiagonalSecundaria(Matriz matriz, int linha, int coluna);
 int obterPontuacao(Matriz matriz);
 void mutacao(Matriz &matriz);
 void cruzamento(vector<Matriz> populacao, int indice_pai1, int indice_pai2, Matriz &filho);
+
+vector<Matriz> populacao;
 
 void iniciarMatriz(Matriz &matriz)
 {
@@ -41,7 +48,7 @@ void iniciarMatriz(Matriz &matriz)
     }
 }
 
-void inicializarPopulacao(vector<Matriz> &populacao)
+void inicializarPopulacao()
 {
     for (size_t i = 0; i < TAM_POPULACAO; i++)
     {
@@ -175,7 +182,7 @@ void mutacao(Matriz &matriz)
     matriz[linha] = individuo;
 }
 
-void cruzamento(vector<Matriz> populacao, int indice_pai1, int indice_pai2, Matriz &filho)
+void cruzamento(int indice_pai1, int indice_pai2, Matriz &filho)
 {
     size_t ponto = rand() % TAM_GENES;
 
@@ -185,7 +192,7 @@ void cruzamento(vector<Matriz> populacao, int indice_pai1, int indice_pai2, Matr
         filho.push_back(populacao[indice_pai2][i]);
 }
 
-int obterMelhor(vector<Matriz> populacao)
+int obterMelhor()
 {
     int indice_melhor = 0;
     int score_melhor = obterPontuacao(populacao[0]);
@@ -203,77 +210,95 @@ int obterMelhor(vector<Matriz> populacao)
     return indice_melhor;
 }
 
+void threadFn(size_t &i)
+{
+    double prob;
+    int indice_pai1, indice_pai2, score_pai1, score_filho;
+    size_t j;
+    //clock_t start = clock();
+    for (j = 0; j < TAM_TORNEIO; j++)
+    {
+        prob = ((double)rand() / ((double)RAND_MAX + 1));
+
+        if (prob < PROB_CRUZAMENTO)
+        {
+            indice_pai1 = rand() % TAM_POPULACAO;
+
+            do
+            {
+                indice_pai2 = rand() % TAM_POPULACAO;
+            } while (indice_pai1 == indice_pai2);
+
+            Matriz filho;
+            cruzamento(indice_pai1, indice_pai2, filho);
+            prob = ((double)rand() / ((double)RAND_MAX + 1));
+
+            if (prob < PROB_MUTACAO)
+                mutacao(filho);
+
+            score_pai1 = obterPontuacao(populacao[indice_pai1]);
+            score_filho = obterPontuacao(filho);
+
+            if (score_filho < score_pai1)
+            {
+                
+                populacao[indice_pai1] = filho;
+                
+            }
+        }
+    }
+    i++;
+    //clock_t end = clock();
+    //cout << "Tempo de Thread " << i << ": " << (end - start) / (double)CLOCKS_PER_SEC << " segundos" << endl;
+}
+
 int main()
 {
     srand(unsigned(time(NULL)));
-    int indice_pai1;
-    int indice_pai2;
-    int score_pai1;
-    int score_filho;
-    int score_melhor;
-    int indice_melhor;
-    size_t i, j;
-    double prob;
-    vector<Matriz> populacao;
-
-    inicializarPopulacao(populacao);
+    int score_melhor, indice_melhor;
+    size_t i, contador = 0;
+    vector<thread> threads;
+    inicializarPopulacao();
+    auto iniciar = [](thread &t) { t.join(); };
     cout << "Procurando solucao por algoritmo genetico..." << endl;
-	auto start = chrono::steady_clock::now();
-    for (i = 0; i < GERACOES; i++)
+    auto start = chrono::steady_clock::now();
+    for (i = 0; i < GERACOES;)
     {
-        for (j = 0; j < TAM_TORNEIO; j++)
+        if (contador < N_THREADS)
         {
-            prob = ((double)rand() / ((double)RAND_MAX + 1));
-
-            if (prob < PROB_CRUZAMENTO)
-            {
-                indice_pai1 = rand() % TAM_POPULACAO;
-
-                do
-                {
-                    indice_pai2 = rand() % TAM_POPULACAO;
-                } while (indice_pai1 == indice_pai2);
-
-                Matriz filho;
-                cruzamento(populacao, indice_pai1, indice_pai2, filho);
-                prob = ((double)rand() / ((double)RAND_MAX + 1));
-
-                if (prob < PROB_MUTACAO)
-                    mutacao(filho);
-
-                score_pai1 = obterPontuacao(populacao[indice_pai1]);
-                score_filho = obterPontuacao(filho);
-
-                if (score_filho < score_pai1)
-                {
-                    populacao[indice_pai1] = filho;
-                }
-            }
+            threads.push_back(thread(threadFn, ref(i)));
+            contador++;
+            continue;
         }
-
-        indice_melhor = obterMelhor(populacao);
+        else
+        {
+            for_each(threads.begin(), threads.end(), iniciar);
+            threads.clear();
+            contador = 0;
+        }
+        indice_melhor = obterMelhor();
         score_melhor = obterPontuacao(populacao[indice_melhor]);
-
         // esse if é pra fazer imprimir na tela a pontuação apenas a cada 50 gerações.
-        if (i % 50 == 0)
+        if (i % (N_THREADS * 5) == 0)
         {
             cout << "Geracao: " << i << endl;
             cout << "Pontuacao: " << score_melhor << endl
                  << endl;
         }
-
         // se o score chegou a zero, significa que encontrou a solução
         if (score_melhor == 0)
             break;
     }
-	auto end = chrono::steady_clock::now();
+
+    auto end = chrono::steady_clock::now();
     // se chegou aqui é porq encontrou a solução ou acabou as gerações
     cout << "Geracao: " << i + 1 << endl;
     exibir(populacao[indice_melhor]);
 
     cout << endl;
-    cout << "Pontuacao: " << score_melhor << endl << endl;
-	cout << "Tempo total gasto: " << chrono::duration_cast<chrono::seconds>(end - start).count() << " segundos" << endl;
+    cout << "Pontuacao: " << score_melhor << "\n\n";
+
+    cout << "Tempo total gasto: " << chrono::duration_cast<chrono::seconds>(end - start).count() << " segundos" << endl;
 
     return 0;
 }
